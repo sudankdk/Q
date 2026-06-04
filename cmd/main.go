@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,6 +32,17 @@ func main() {
 	defer f.Close()
 
 	wal := &WAL{file: f}
+	msg, err := wal.ReadFromWAL()
+	if err != nil {
+		fmt.Printf("Error reading from WAL: %v\n", err)
+		return
+	}
+
+	for _, m := range msg {
+		fmt.Printf("Recovered message from WAL: %s\n", m.Id)
+		fmt.Printf("message from WAL: %s\n", string(m.Payload))
+	}
+
 	pq := &PersistentQueue{wal: wal}
 	err = pq.Enqueue(message1)
 	if err != nil {
@@ -133,13 +145,43 @@ func (w *WAL) Append(msg Message) error {
 	return nil
 }
 
+// reader
+func (w *WAL) ReadFromWAL() ([]Message, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var messages []Message
+	if _, err := w.file.Seek(0, 0); err != nil { // Move to the beginning of the file
+		return nil, err
+	}
+
+	scanner := bufio.NewScanner(w.file)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var message Message
+		if err := json.Unmarshal(line, &message); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
 // persistance memeory
 type PersistentQueue struct {
+	mu       sync.Mutex
 	wal      *WAL
 	Messages []Message
 }
 
 func (pq *PersistentQueue) Enqueue(msg Message) error {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
 	err := pq.wal.Append(msg)
 	if err != nil {
 		return err
@@ -149,6 +191,8 @@ func (pq *PersistentQueue) Enqueue(msg Message) error {
 }
 
 func (pq *PersistentQueue) Dequeue() (*Message, error) {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
 	if len(pq.Messages) == 0 {
 		return nil, fmt.Errorf("queue is empty")
 	}
