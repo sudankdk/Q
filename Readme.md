@@ -35,6 +35,15 @@ Key components:
   - `reaper.go` : background process to find/stabilize stuck in-flight messages
 - `cmd/main.go` : simple CLI entrypoint used for manual runs or demos
 
+Data Architecture
+
+- Message format: each message contains an `id`, `payload` (opaque bytes or JSON), `headers` (optional map), `created_at` (timestamp), `attempts` (retry count), `status` (READY, IN_FLIGHT, ACKED, DLQ), and `lease_expiry` (timestamp when in-flight lease expires).
+- WAL entry format: append-only records representing operations (ENQUEUE, ACK, NACK, REQUEUE, DLQ). Each entry records the operation type, `message_id`, relevant metadata or payload, and a timestamp. Entries are serialized (JSON or binary) and flushed to disk before in-memory state is updated.
+- In-memory structures: the runtime keeps a FIFO queue of message IDs, a `messages` map (id -> Message) holding payloads/metadata, and an `in_flight` map tracking leased messages and expiry. The DLQ is represented as a separate persistent list of failed message records.
+- Storage layout: the `data/` directory holds WAL segment files (e.g. `wal-0001.log`), optional snapshots for fast recovery, and DLQ files. On startup the WAL is replayed (see `wal/recovery.go`) to rebuild `messages`, queue order, and in-flight leases.
+- Retention & compaction: a periodic compaction/snapshot creates a checkpoint of current in-memory state and truncates consumed WAL segments to bound disk usage.
+- Consistency: the system enforces WAL-before-ack semantics (write & fsync WAL entry, then update in-memory state) so acknowledged messages are durable; replays guarantee at-least-once delivery semantics and the DLQ captures messages that exceed retry policies.
+
 Flow summary:
 1. Enqueue writes to WAL, then updates in-memory queue.
 2. Worker dequeues and marks message `IN_FLIGHT`.
