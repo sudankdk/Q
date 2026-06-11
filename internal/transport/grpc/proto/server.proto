@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package queue;
+
+option go_package = "./proto";
+
+service QueueService {
+  rpc Publish(PublishRequest)
+      returns (PublishResponse);
+
+  rpc Consume(ConsumeRequest)
+      returns (ConsumeResponse);
+
+  rpc Ack(AckRequest)
+      returns (AckResponse);
+}
+
+message PublishRequest {
+  string payload = 1;
+}
+
+message PublishResponse {
+  string id = 1;
+}
+
+message ConsumeRequest {}
+
+message ConsumeResponse {
+  string id = 1;
+  bytes payload = 2;
+}
+
+message AckRequest {
+  string id = 1;
+}
+
+message AckResponse {
+  bool success = 1;
+}
